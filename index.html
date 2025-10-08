@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>老鼠大戰貓：鈴鐺保衛戰 (塔防版)</title>
+    <!-- 載入 Tailwind CSS 確保響應式設計和美觀 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 使用 Inter 字體並確保整個頁面佈局美觀 */
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f7; }
+        #gameCanvas {
+            border: 4px solid #333;
+            background-color: #b8e0b8; /* 廚房地板/草地背景 */
+            max-width: 800px;
+            max-height: 600px;
+            margin: 0 auto;
+            display: block;
+        }
+        .info-card {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .mouse {
+            position: absolute;
+            font-size: 1.5rem;
+            pointer-events: none; /* 忽略點擊事件 */
+            color: #8b5cf6; /* 紫色老鼠 */
+        }
+        .cat-tower {
+            position: absolute;
+            font-size: 2rem;
+            cursor: pointer;
+            color: #f97316; /* 橘貓 */
+            border-radius: 50%;
+            background: #ffeac7;
+            padding: 0.25rem;
+        }
+        .projectile {
+            position: absolute;
+            font-size: 1rem;
+            pointer-events: none;
+            color: #ef4444; /* 紅色毛線球 */
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <h1 class="text-3xl font-bold text-center mb-6 text-gray-800">
+        老鼠大戰貓：鈴鐺保衛戰 塔防
+    </h1>
+
+    <div id="gameContainer" class="relative max-w-4xl mx-auto rounded-xl overflow-hidden">
+        <!-- 遊戲畫布 - 相當於 Scratch 的舞台 -->
+        <canvas id="gameCanvas" width="800" height="600" class="rounded-lg"></canvas>
+
+        <!-- 資訊與控制面板 - 相當於 Scratch 的變數顯示和按鈕 -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+            <div class="info-card">
+                <div class="text-sm font-medium text-gray-500">鈴鐺生命 (Lives)</div>
+                <div id="livesDisplay" class="text-2xl font-bold text-red-600">10</div>
+            </div>
+            <div class="info-card">
+                <div class="text-sm font-medium text-gray-500">起司 (金幣)</div>
+                <div id="cheeseDisplay" class="text-2xl font-bold text-yellow-600">100</div>
+            </div>
+            <div class="info-card">
+                <div class="text-sm font-medium text-gray-500">波數 (Wave)</div>
+                <div id="waveDisplay" class="text-2xl font-bold text-blue-600">1</div>
+            </div>
+            <div class="info-card">
+                <div class="text-sm font-medium text-gray-500">分數 (Score)</div>
+                <div id="scoreDisplay" class="text-2xl font-bold text-green-600">0</div>
+            </div>
+        </div>
+
+        <!-- 商店區 - 購買貓咪防禦塔 -->
+        <div class="flex flex-col md:flex-row justify-center space-y-4 md:space-y-0 md:space-x-4 mt-6">
+            <button id="buyCat1" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-3 px-6 rounded-full transition duration-150 shadow-md transform hover:scale-105">
+                購買橘貓 (🍊) - 50 起司
+            </button>
+            <button id="startWave" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-full transition duration-150 shadow-md transform hover:scale-105">
+                開始下一波 (Wave)
+            </button>
+        </div>
+
+        <!-- 遊戲訊息提示 -->
+        <div id="messageBox" class="fixed inset-0 bg-black bg-opacity-75 hidden items-center justify-center p-4 z-10">
+            <div class="bg-white p-8 rounded-xl shadow-2xl text-center">
+                <h2 id="messageTitle" class="text-3xl font-bold text-gray-900 mb-4"></h2>
+                <p id="messageContent" class="text-lg text-gray-700 mb-6"></p>
+                <button id="closeMessage" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-full transition duration-150">
+                    確定
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // 塔防遊戲的核心邏輯
+        
+        // --- 遊戲設定 ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const cheeseDisplay = document.getElementById('cheeseDisplay');
+        const waveDisplay = document.getElementById('waveDisplay');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const buyCat1Button = document.getElementById('buyCat1');
+        const startWaveButton = document.getElementById('startWave');
+        const messageBox = document.getElementById('messageBox');
+        const messageTitle = document.getElementById('messageTitle');
+        const messageContent = document.getElementById('messageContent');
+        const closeMessage = document.getElementById('closeMessage');
+
+        let isPlacingCat = false;
+        let gameRunning = false;
+        
+        // 遊戲狀態變數
+        let gameState = {
+            lives: 10,
+            cheese: 100,
+            score: 0,
+            wave: 0,
+            enemies: [], // 老鼠列表
+            towers: [],  // 貓咪防禦塔列表
+            projectiles: [], // 毛線球列表
+            pathIndex: 0, 
+        };
+
+        // 簡化的老鼠行走路徑 (新增 4 個折線，使路徑更曲折)
+        // 總共 10 個點，9 個路段
+        const path = [
+            { x: 0, y: 300 },      // 1. 起點 (左邊中間)
+            { x: 100, y: 300 },
+            { x: 100, y: 500 },    // 2. 轉折點 (下)
+            { x: 400, y: 500 },
+            { x: 400, y: 200 },    // 3. 轉折點 (上)
+            { x: 650, y: 200 },
+            { x: 650, y: 450 },    // 4. 轉折點 (下)
+            { x: 750, y: 450 },
+            { x: 750, y: 150 },    // 5. 轉折點 (上)
+            { x: 800, y: 150 }     // 6. 終點 (右上角附近)
+        ];
+
+        // --- 遊戲物件類別 ---
+
+        /**
+         * 老鼠 (敵人) 類別。
+         */
+        class Mouse {
+            constructor(wave) {
+                this.x = path[0].x;
+                this.y = path[0].y;
+                this.size = 20;
+                this.health = 1 + wave * 0.5; 
+                this.maxHealth = this.health;
+                this.speed = 1 + wave * 0.05; 
+                this.pathTargetIndex = 1;
+                this.reward = 10;
+                this.type = '🐭';
+            }
+
+            // 更新老鼠的位置
+            update() {
+                if (this.health <= 0) {
+                    return true; // 標記為需要刪除
+                }
+
+                if (this.pathTargetIndex >= path.length) {
+                    // 到達終點
+                    gameState.lives--;
+                    return true; // 標記為需要刪除
+                }
+
+                const target = path[this.pathTargetIndex];
+                const dx = target.x - this.x;
+                const dy = target.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < this.speed) {
+                    this.x = target.x;
+                    this.y = target.y;
+                    this.pathTargetIndex++;
+                } else {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                }
+                return false; // 不需要刪除
+            }
+
+            // 繪製老鼠
+            draw() {
+                ctx.font = `${this.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type, this.x, this.y);
+
+                // 畫生命條
+                const healthBarWidth = this.size;
+                const healthRatio = this.health / this.maxHealth;
+                ctx.fillStyle = '#ff0000'; // 紅色背景
+                ctx.fillRect(this.x - healthBarWidth / 2, this.y - this.size, healthBarWidth, 3);
+                ctx.fillStyle = '#00ff00'; // 綠色血條
+                ctx.fillRect(this.x - healthBarWidth / 2, this.y - this.size, healthBarWidth * healthRatio, 3);
+            }
+        }
+
+        /**
+         * 貓咪 (防禦塔) 類別。
+         */
+        class CatTower {
+            constructor(x, y, cost, range, damage, fireRate) {
+                this.x = x;
+                this.y = y;
+                this.cost = cost;
+                this.range = range;
+                this.damage = damage;
+                this.fireRate = fireRate; // 每次攻擊間隔的幀數
+                this.fireCooldown = 0;
+                this.type = '🐱';
+            }
+
+            // 貓咪的攻擊邏輯
+            update() {
+                if (this.fireCooldown > 0) {
+                    this.fireCooldown--;
+                    return;
+                }
+
+                // 尋找最近的敵人
+                const target = gameState.enemies.find(enemy => {
+                    const dx = enemy.x - this.x;
+                    const dy = enemy.y - this.y;
+                    return Math.sqrt(dx * dx + dy * dy) <= this.range;
+                });
+
+                if (target) {
+                    // 找到目標，發射投射物
+                    gameState.projectiles.push(new Projectile(this.x, this.y, target, this.damage));
+                    this.fireCooldown = this.fireRate;
+                }
+            }
+
+            // 繪製貓咪
+            draw() {
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type, this.x, this.y);
+            }
+        }
+
+        /**
+         * 毛線球 (投射物) 類別。
+         */
+        class Projectile {
+            constructor(x, y, target, damage) {
+                this.x = x;
+                this.y = y;
+                this.damage = damage;
+                this.speed = 10;
+                this.target = target; // 目標老鼠
+                this.type = '🧶'; // 毛線球
+                
+                // 計算移動方向
+                const dx = target.x - x;
+                const dy = target.y - y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                this.vx = (dx / dist) * this.speed;
+                this.vy = (dy / dist) * this.speed;
+            }
+
+            // 更新投射物位置和碰撞偵測
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // 簡化碰撞偵測：檢查是否接近目標老鼠
+                if (this.target.health > 0 && Math.abs(this.x - this.target.x) < 15 && Math.abs(this.y - this.target.y) < 15) {
+                    this.target.health -= this.damage;
+                    
+                    if (this.target.health <= 0) {
+                        // 老鼠被擊敗，增加資源
+                        gameState.cheese += this.target.reward;
+                        gameState.score++;
+                    }
+
+                    return true; // 標記為需要刪除 (投射物)
+                }
+
+                // 如果目標老鼠消失了，或者投射物飛太遠，則刪除
+                if (this.target.health <= 0 || this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                     return true;
+                }
+
+                return false; // 不需要刪除
+            }
+
+            // 繪製投射物
+            draw() {
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type, this.x, this.y);
+            }
+        }
+
+        // --- 遊戲主循環 (恢復到無地形的繪製邏輯) ---
+
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            // 1. 清空畫布 (背景色保持 canvas 預設的 #b8e0b8)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 2. 繪製路徑
+            ctx.strokeStyle = '#a0522d'; // 棕色
+            ctx.lineWidth = 40;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y);
+            path.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.stroke();
+            
+            // 繪製鈴鐺終點
+            ctx.font = '50px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            // 終點為 (800, 150)，將鈴鐺繪製在路徑終點
+            ctx.fillText('🔔', path[path.length - 1].x - 30, path[path.length - 1].y); 
+
+            // 3. 更新與繪製敵人 (老鼠)
+            gameState.enemies = gameState.enemies.filter(enemy => {
+                const remove = enemy.update(); 
+                if (!remove) {
+                    enemy.draw();
+                }
+                return !remove; 
+            });
+
+            // 4. 更新與繪製防禦塔 (貓咪)
+            gameState.towers.forEach(tower => {
+                tower.update();
+                tower.draw();
+            });
+
+            // 5. 更新與繪製投射物 (毛線球)
+            gameState.projectiles = gameState.projectiles.filter(proj => {
+                const remove = proj.update();
+                if (!remove) {
+                    proj.draw();
+                }
+                return !remove;
+            });
+
+            // 6. 更新顯示數值
+            updateUI();
+            
+            // 7. 檢查遊戲是否結束
+            if (gameState.lives <= 0) {
+                endGame(false);
+                return; 
+            }
+            
+            // 8. 檢查波數是否結束
+            const currentWaveConfig = getWaveConfig(gameState.wave);
+            if (gameState.wave > 0 && gameState.enemies.length === 0 && mouseSpawnedCount >= currentWaveConfig.count) {
+                startWaveButton.disabled = false;
+                startWaveButton.textContent = `開始第 ${gameState.wave + 1} 波!`;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function updateUI() {
+            livesDisplay.textContent = gameState.lives;
+            cheeseDisplay.textContent = gameState.cheese;
+            waveDisplay.textContent = gameState.wave;
+            scoreDisplay.textContent = gameState.score;
+        }
+
+        // --- 動態波數設定 (無限關卡邏輯保留) ---
+
+        /**
+         * 根據波數動態計算難度 (老鼠數量、血量乘數、生成延遲)。
+         */
+        function getWaveConfig(waveNumber) {
+            if (waveNumber <= 0) {
+                return { count: 0, delay: 0, healthMultiplier: 0 };
+            }
+
+            const baseCount = 5; 
+            const countGrowth = 2; 
+            const healthGrowth = 0.5; 
+            const initialDelay = 1500; 
+            const delayReduction = 50; 
+            const minDelay = 500; 
+
+            const count = baseCount + (waveNumber - 1) * countGrowth;
+            const healthMultiplier = 1.0 + (waveNumber - 1) * healthGrowth;
+            const delay = Math.max(minDelay, initialDelay - (waveNumber - 1) * delayReduction);
+
+            return { count, delay, healthMultiplier };
+        }
+
+        let mouseSpawnedCount = 0;
+
+        // 開始波數
+        function startWave() {
+            startWaveButton.disabled = true;
+            gameState.wave++;
+            mouseSpawnedCount = 0;
+
+            const currentWave = getWaveConfig(gameState.wave);
+            
+            function spawnMouse() {
+                if (mouseSpawnedCount < currentWave.count) {
+                    const newMouse = new Mouse(gameState.wave);
+                    gameState.enemies.push(newMouse);
+                    mouseSpawnedCount++;
+
+                    newMouse.health *= currentWave.healthMultiplier;
+                    newMouse.maxHealth = newMouse.health;
+
+                    setTimeout(spawnMouse, currentWave.delay);
+                }
+            }
+            spawnMouse();
+        }
+
+        // 結束遊戲
+        function endGame(won) {
+            gameRunning = false;
+            showMessage('💔 遊戲失敗', `老鼠偷走了鈴鐺！您成功守住了 ${gameState.wave} 波，總得分是 ${gameState.score} 分。`);
+        }
+
+        // 顯示訊息框
+        function showMessage(title, content) {
+            messageTitle.textContent = title;
+            messageContent.textContent = content;
+            messageBox.classList.remove('hidden');
+            messageBox.classList.add('flex');
+        }
+
+        // 隱藏訊息框
+        closeMessage.onclick = () => {
+            messageBox.classList.remove('flex');
+            messageBox.classList.add('hidden');
+        };
+
+        // --- 玩家互動 (購買貓咪) ---
+
+        buyCat1Button.onclick = () => {
+            if (gameState.cheese >= 50 && !isPlacingCat) {
+                isPlacingCat = true;
+                buyCat1Button.textContent = '點擊畫布放置貓咪...';
+                buyCat1Button.disabled = true;
+            } else if (isPlacingCat) {
+                 // 取消放置
+                isPlacingCat = false;
+                buyCat1Button.textContent = '購買橘貓 (🍊) - 50 起司';
+                buyCat1Button.disabled = false;
+            }
+        };
+
+        canvas.onclick = (event) => {
+            if (isPlacingCat) {
+                // 計算點擊座標在畫布上的位置
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+
+                // 基礎貓咪屬性 (已移除地形增益邏輯)
+                const baseRange = 150;
+                const baseDamage = 1.0;
+                const baseFireRate = 30;
+
+                const newCat = new CatTower(
+                    x, y, 
+                    50, 
+                    baseRange,
+                    baseDamage,
+                    baseFireRate
+                );
+
+                gameState.towers.push(newCat);
+                gameState.cheese -= newCat.cost;
+
+                // 結束放置模式
+                isPlacingCat = false;
+                buyCat1Button.textContent = '購買橘貓 (🍊) - 50 起司';
+                buyCat1Button.disabled = false;
+                updateUI();
+            }
+        };
+
+        startWaveButton.onclick = startWave;
+
+        // --- 遊戲初始化 ---
+
+        function initGame() {
+            // 重設所有狀態
+            gameState.lives = 10;
+            gameState.cheese = 100;
+            gameState.score = 0;
+            gameState.wave = 0;
+            gameState.enemies = [];
+            gameState.towers = [];
+            gameState.projectiles = [];
+            
+            updateUI();
+            gameRunning = true;
+            startWaveButton.disabled = false;
+            startWaveButton.textContent = `開始第 1 波 (Wave)`;
+            // 確保文字置中設定
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>
